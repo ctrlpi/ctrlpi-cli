@@ -169,32 +169,36 @@ def resolve_network_name(ip, bonjour):
     return bonjour.get(ip) or smb_name(ip) or "-"
 
 def check_agent(ip, bonjour):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1.5)
-    try:
-        result = sock.connect_ex((ip, 8314))
-        if result != 0:
-            return None
-    finally:
-        sock.close()
-        
-    hostname = resolve_network_name(ip, bonjour)
+    import urllib.request
+    import socket
+    
     name = "0"
+    is_ctrlpi = False
     try:
-        import urllib.request
         with urllib.request.urlopen(f"http://{ip}:8314/hello", timeout=1.5) as r:
             if r.status == 200:
                 data = json.loads(r.read().decode("utf-8"))
                 name = data.get('name', '0')
+                is_ctrlpi = True
     except Exception:
         pass
         
-    return (ip, hostname, name)
+    if not is_ctrlpi:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.5)
+                if s.connect_ex((ip, 22)) != 0:
+                    return (ip, None, None)
+        except Exception:
+            return (ip, None, None)
+            
+    hostname = resolve_network_name(ip, bonjour)
+    return (ip, hostname, name if is_ctrlpi else None)
 
 def do_scan():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(('10.255.255.255', 1))
+        s.connect(('8.8.8.8', 80))
         local_ip = s.getsockname()[0]
     except Exception:
         local_ip = '192.168.1.1'
@@ -228,29 +232,45 @@ def do_scan():
             result = future.result()
             if result:
                 ip, hostname, name = result
+                if hostname is None:
+                    continue
+                    
                 found_any = True
                 
                 if len(hostname) > 19:
                     hostname = hostname[:16] + "..."
                     
-                print(f"{ip:<17} {hostname:<20} {name}")
-                
-                if ip in existing_agents:
-                    # If it already exists, update the name if it's valid and has changed
-                    if name and name != "0" and name != "unknown":
-                        if existing_agents[ip].get("name") != name:
-                            existing_agents[ip]["name"] = name
-                            needs_save = True
+                if hostname == "-":
+                    host_disp = "\033[31m" + "-".ljust(20) + "\033[0m"
                 else:
-                    new_agent = {
-                        "name": name,
-                        "ip": ip,
-                        "port": 8314,
-                        "api_key": DEFAULT_AGENT_KEY
-                    }
-                    agents.append(new_agent)
-                    existing_agents[ip] = new_agent
-                    needs_save = True
+                    host_disp = "\033[32m" + hostname.ljust(20) + "\033[0m"
+                    
+                if not name or name == "0" or name == "unknown":
+                    name_disp = "\033[31m-\033[0m"
+                else:
+                    name_disp = "\033[34m" + name + "\033[0m"
+                    
+                print(f"{ip:<17} {host_disp} {name_disp}")
+                
+                if name is not None:
+                    if ip in existing_agents:
+                        # If it already exists, update the name if it's valid and has changed
+                        if name and name != "0" and name != "unknown":
+                            if existing_agents[ip].get("name") != name:
+                                existing_agents[ip]["name"] = name
+                                needs_save = True
+                    else:
+                        new_agent = {
+                            "name": name,
+                            "ip": ip,
+                            "port": 8314,
+                            "api_key": DEFAULT_AGENT_KEY
+                        }
+                        agents.append(new_agent)
+                        existing_agents[ip] = new_agent
+                        needs_save = True
+
+
     
     if not found_any:
         print("No agents found.")
