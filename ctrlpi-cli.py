@@ -10,6 +10,7 @@ from urllib.error import URLError
 import subprocess
 import re
 
+VERSION = "0.9.24"  # CLI version; keep in sync with the README badge
 COMMANDS = {"use", "scan", "gpio", "sensor", "config", "logs", "restart", "upgrade"}
 DEFAULT_AGENT_KEY = "your-secret-key"
 

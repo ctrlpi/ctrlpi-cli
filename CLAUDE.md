@@ -1,4 +1,4 @@
-# CLAUDE.md
+# CLAUDE.md - ctrlpi-cli
 
 This file provides guidance to Claude Code when working with this repository.
 

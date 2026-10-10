@@ -1,10 +1,12 @@
 # ctrlPi API CLI
 
 [![Platform: Cross-Platform](https://img.shields.io/badge/platform-Cross--Platform-006400.svg)](#setup)
-[![Version 0.9.23](https://img.shields.io/badge/version-0.9.23-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
-[![Python 3](https://img.shields.io/badge/python-3%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Version 0.9.24](https://img.shields.io/badge/version-0.9.24-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![Auth: Api-Key](https://img.shields.io/badge/auth-Api--Key-orange.svg)](#setup)
+[![License: MIT](https://img.shields.io/badge/license-MIT-188038.svg)](LICENSE)
 ![Status: Beta](https://img.shields.io/badge/status-Beta-red.svg)
+[![Build Status](https://github.com/ctrlpi/ctrlpi-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrlpi/ctrlpi-cli/actions)
 
 A pure-Python command-line interface for interacting with ctrlPi agents (Raspberry Pi, Pico W). Designed to be fast and portable with **zero external dependencies**.
 
@@ -118,4 +120,5 @@ You can verify the CLI against a running agent using the included test script:
 ```
 
 ## License
-[MIT](LICENSE)
+
+[MIT](http://localhost:8181/LICENSE)
