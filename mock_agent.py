@@ -1,14 +1,27 @@
-import os
 #!/usr/bin/env python3
+# Mock ctrlPi agent for tests: answers the agents' REST API from memory, on loopback.
+# Several projects keep an identical copy of this file; change them all together.
+# `--port 0` takes a free port and prints it, so a test can read it back.
+import os
 import sys
 import json
 import time
 import argparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import TCPServer
+
+class LocalHTTPServer(HTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind performs a reverse DNS lookup for server_name.
+        # Tests only need a loopback listener, and hosted macOS runners can stall
+        # on that lookup before the server announces its ephemeral port.
+        TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
 
 class AgentHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass # Suppress logs to avoid cluttering test output
+        pass # Suppress HTTP request logs during test execution
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -62,7 +75,8 @@ class AgentHandler(BaseHTTPRequestHandler):
             return self.send_json({"name": self.server.agent_name, "ip": "127.0.0.1"})
             
         if self.path == '/config/read':
-            cfg = self.server.config.copy()
+            # Like the real agents, /config/read never shows the agent's own key.
+            cfg = self._public_config()
             cfg["agent"] = {
                 "version": "1.0.0", 
                 "platform": self.server.agent_type,
@@ -132,13 +146,13 @@ class AgentHandler(BaseHTTPRequestHandler):
         
         if self.path == '/config/update':
             self.server.config.update(body)
-            # return full config to satisfy bridge validation
-            return self.send_json(self.server.config)
+            # The full config (bridges read their callback fields back), minus the key.
+            return self.send_json(self._public_config())
             
         if self.path == '/config/load':
+            # Like the real agents: a config without api_key keeps the current one.
+            body.setdefault('api_key', self.server.config.get('api_key'))
             self.server.config = body
-            if 'api_key' not in self.server.config:
-                self.server.config['api_key'] = "your-secret-key"
             if 'gpios' not in self.server.config:
                 self.server.config['gpios'] = {}
             if 'sensors' not in self.server.config:
@@ -246,6 +260,11 @@ class AgentHandler(BaseHTTPRequestHandler):
             
         self.send_error_json("Not found", 404)
 
+    def _public_config(self):
+        cfg = dict(self.server.config)
+        cfg.pop('api_key', None)
+        return cfg
+
     def _mock_sensor_reading(self, name, conf):
         script = conf.get("script", "")
         if "json" in script:
@@ -260,7 +279,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 
 def start_server(port, name, agent_type="pi"):
     server_address = ('127.0.0.1', port)
-    httpd = HTTPServer(server_address, AgentHandler)
+    httpd = LocalHTTPServer(server_address, AgentHandler)
     httpd.agent_name = name
     httpd.agent_type = agent_type
     
@@ -278,7 +297,7 @@ def start_server(port, name, agent_type="pi"):
     }
 
     
-    print(f"Starting mock agent '{name}' on port {port}...")
+    print(f"Starting mock agent '{name}' on port {httpd.server_port}...")
     httpd.serve_forever()
 
 def run():

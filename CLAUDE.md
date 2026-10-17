@@ -11,13 +11,31 @@ A pure Python, zero-dependency command-line interface (`ctrlpi-cli.py`) for inte
 ## Architecture
 
 - **ctrlpi-cli.py**: The main CLI script. Handles parsing, HTTP requests (via `urllib`), and DNS resolution.
-- **test.py**: Integration test script that uses `subprocess` to call `ctrlpi-cli.py` against a specified host.
+- **test.py**: Test suite. Starts `mock_agent.py` on port 12314 and calls `ctrlpi-cli.py` through `subprocess`, plus a few in-process checks of its functions. No real agent is needed.
+- **mock_agent.py**: A mock agent shared with other projects' tests; every copy is identical, so change them together.
+
+## Config folder (`--config`)
+
+Config files (`cli-config.json` with the default host, `agents-config.json` with the shared agent
+list) live in `~/.ctrlpi/`, or in the folder given by `--config <dir>`, the same flag ctrlpi-lab and
+mcp-bridge take. `pop_flag()` strips it (and `--api-key`) from `sys.argv` (it may appear anywhere) and sets the
+module-level `CONFIG_DIR` that `get_config_path()` reads. `test.py` passes `--config <tempdir>` to
+every CLI run and sets `mod.CONFIG_DIR` on in-process loads, so the tests never touch the real
+`~/.ctrlpi`. Keep it that way: a new test that writes config must go through that temp folder.
 
 ## Network Discovery (`scan`)
 
-- The `scan` command is highly optimized using parallel threading and macOS Bonjour/mDNS resolution (similar to `search.py` in `dev-api-tester`).
-- Newly discovered agents are aggressively synced to `~/.ctrlpi/config.json`.
+- The `scan` command probes the /24 in parallel (48 at a time) and names hosts by reverse DNS, plus Bonjour/mDNS and SMB on macOS.
+- Moved agents are repaired first (`reconcile_agents()`: only when a key works at the new address; duplicate claims print a `[SECURITY]` warning), then new ones are added (`search_and_add_agents()`: default key if accepted, else an empty `api_key`).
+
+## Keys
+
+A saved agent's `api_key` comes from `agents-config.json`, anything else gets the default `your-secret-key`; `--api-key` overrides both for one command. `remember_agent()` saves a key or name the agent just accepted through `config update`/`config load`: it updates the entry at the address used, or the one with the agent's `/hello` name (never adding a duplicate), and ignores an empty key or name, which the agents ignore too. `parse_kv()` never converts `STRING_FIELDS` (keys, names, URLs, scripts) to numbers, and keys are always sent as text.
+
+## Output
+
+Results (JSON, the scan table) go to stdout; errors, notes and `[SECURITY]` warnings go to stderr through `note()`/`warn()`/`fail()`, so a result can be piped into `jq`.
 
 ## Name Resolution
-The CLI accepts raw IP addresses, `.local` hostnames, or exact agent names.
-If a name is passed (e.g. `./ctrlpi-cli.py use pi4`), it looks up the name in `~/.ctrlpi/config.json` case-insensitively. If missing, it automatically appends `.local` and retries standard DNS natively on the network, gracefully falling back on failure.
+The CLI accepts raw IP addresses (IPv6 in brackets with a port, `[fd00::5]:8314`; `split_host()`/`join_host()`), `.local` hostnames, or exact agent names. A saved agent with no address on file stops with a message to run `scan`.
+If a name is passed (e.g. `./ctrlpi-cli.py use pi4`), it looks up the name in `~/.ctrlpi/agents-config.json` case-insensitively. If missing, it automatically appends `.local` and retries standard DNS natively on the network, gracefully falling back on failure.
