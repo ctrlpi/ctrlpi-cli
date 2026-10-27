@@ -1,7 +1,7 @@
 # ctrlPi API CLI
 
 [![Platform: Cross-Platform](https://img.shields.io/badge/platform-Cross--Platform-006400.svg)](#setup)
-[![Version 0.9.26](https://img.shields.io/badge/version-0.9.26-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
+[![Version 0.9.30](https://img.shields.io/badge/version-0.9.30-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Auth: Api-Key](https://img.shields.io/badge/auth-Api--Key-orange.svg)](#setup)
 [![License: MIT](https://img.shields.io/badge/license-MIT-188038.svg)](LICENSE)
@@ -116,17 +116,27 @@ The CLI covers every endpoint of the agent's REST API that needs a key. Below ar
 ./ctrlpi-cli.py sensor r cpu_temp
 ```
 
-#### 11. View watched pins and webhooks
+#### 11. Manage the agent's scripts
+The files in the agent's `scripts/` folder, the one sensors run from (agents 0.9.28 or later). Writing and removing need an agent key other than the default `your-secret-key`, and are refused once a `write.lock` file is in the folder.
+```bash
+./ctrlpi-cli.py script list
+./ctrlpi-cli.py script read cpu-temp.sh > cpu-temp.sh   # prints the file's text as is
+./ctrlpi-cli.py script write weather.py ./weather.py    # upload a local file (creates or overwrites)
+./ctrlpi-cli.py script run weather.py zone1             # {"name", "exit_code", "output"}
+./ctrlpi-cli.py script rm weather.py
+```
+
+#### 12. View watched pins and webhooks
 ```bash
 ./ctrlpi-cli.py gpio watched
 ```
 
-#### 12. View recent agent logs
+#### 13. View recent agent logs
 ```bash
 ./ctrlpi-cli.py logs
 ```
 
-#### 13. Restart or upgrade the agent
+#### 14. Restart or upgrade the agent
 ```bash
 ./ctrlpi-cli.py restart
 # To physically reboot the device instead of just the agent:

@@ -319,6 +319,48 @@ class TestCtrlPiCli(unittest.TestCase):
             self.run_cli("config", "update", "api_key=your-secret-key")
         self.assertEqual(self.saved_agent("cli-test-agent").get("api_key"), "your-secret-key")
 
+    def test_scripts(self):
+        # The mock refuses writes on the default key, like the agents.
+        listing = json.loads(self.run_cli("script", "list"))
+        self.assertEqual(listing["write"], "default_key")
+        self.assertIn("cpu-temp.sh", [e["name"] for e in listing["scripts"]])
+        src = os.path.join(self.config_dir, "hello.py")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("print('hi')\n")
+        refused = self.run_cli_raw("script", "write", "hello.py", src)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("403", refused.stderr)
+
+        self.run_cli("config", "update", "api_key=script-key")
+        try:
+            self.assertEqual(json.loads(self.run_cli("script", "write", "hello.py", src)), {"name": "hello.py", "size": 12})
+            self.assertEqual(json.loads(self.run_cli("script", "list"))["write"], "enabled")
+            # read prints the file's text as is
+            self.assertEqual(self.run_cli_raw("script", "read", "hello.py").stdout, "print('hi')\n")
+            ran = json.loads(self.run_cli("script", "run", "hello.py", "a1", "22"))
+            self.assertEqual(ran, {"name": "hello.py", "exit_code": 0, "output": "ran hello.py a1 22"})
+            self.assertEqual(json.loads(self.run_cli("script", "rm", "hello.py"))["status"], "removed")
+            gone = self.run_cli_raw("script", "read", "hello.py")
+            self.assertEqual(gone.returncode, 1)
+            self.assertIn("404", gone.stderr)
+        finally:
+            self.run_cli("config", "update", "api_key=your-secret-key")
+
+    def test_script_name_with_a_path_is_refused(self):
+        for name in ("../config.json", "sub/x.py", ".hidden"):
+            res = self.run_cli_raw("script", "read", name)
+            self.assertEqual(res.returncode, 1, name)
+            self.assertIn("400", res.stderr, name)
+
+    def test_script_usage_errors(self):
+        for args in (("script",), ("script", "read"), ("script", "write", "x.py"), ("script", "bogus", "x.py")):
+            res = self.run_cli_raw(*args)
+            self.assertEqual(res.returncode, 1, args)
+            self.assertIn("Usage", res.stderr, args)
+        missing = self.run_cli_raw("script", "write", "x.py", os.path.join(self.config_dir, "nope.py"))
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("File not found", missing.stderr)
+
     def test_config_load_numeric_key(self):
         # A key written as a number in the file is sent and saved as text.
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".json") as f:

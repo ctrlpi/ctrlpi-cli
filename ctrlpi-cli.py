@@ -13,12 +13,13 @@ import socket
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.9.26"  # CLI version; keep in sync with the README badge
+VERSION = "0.9.30"  # CLI version; keep in sync with the README badge
 # The first word after the optional host; any other first word is taken as the host.
-COMMANDS = {"use", "scan", "gpio", "sensor", "config", "logs", "restart", "upgrade"}
+COMMANDS = {"use", "scan", "gpio", "sensor", "script", "config", "logs", "restart", "upgrade"}
 DEFAULT_AGENT_KEY = "your-secret-key"  # the key every agent ships with
 DEFAULT_PORT = 8314
 SHARED_AGENTS_FILENAME = "agents-config.json"
@@ -279,7 +280,7 @@ def resolve_host(host_str):
     return join_host(host_part, port_part), DEFAULT_AGENT_KEY, None
 
 
-def request(host, path, method="GET", data=None, api_key="", retry_local=True):
+def request(host, path, method="GET", data=None, api_key="", retry_local=True, timeout=5):
     """One REST call. Returns the parsed JSON (or text); on any error prints why and
     exits 1, naming the likely cause (unknown name, agent not running, device off)."""
     url = f"http://{host}{path}"
@@ -295,7 +296,7 @@ def request(host, path, method="GET", data=None, api_key="", retry_local=True):
     req = urllib.request.Request(url, data=encoded_data, headers=headers, method=method)
     try:
         # 5 s covers a busy Pico; the agents answer /upgrade and /restart before acting.
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             res_body = response.read().decode("utf-8")
             try:
                 return json.loads(res_body)
@@ -323,7 +324,7 @@ def request(host, path, method="GET", data=None, api_key="", retry_local=True):
             host_part, port_part = split_host(host)
             if retry_local and not host_part.endswith(".local") and not is_ip_address(host_part):
                 return request(join_host(f"{host_part}.local", port_part or DEFAULT_PORT), path, method, data,
-                               api_key, retry_local=False)
+                               api_key, retry_local=False, timeout=timeout)
 
             hostname_only = host_part
             note(f"Error: Could not resolve hostname for '{hostname_only}'.")
@@ -750,6 +751,7 @@ def print_help():
     print("  scan                      Find ctrlPi agents on the local network")
     print("  gpio <action> [args...]   Read, write, or configure GPIO pins")
     print("  sensor <action> [args...] Read or configure sensors")
+    print("  script <action> [args...] List, read, write, remove or run the agent's scripts")
     print("  config <action> [args...] Read, update, or load the agent's configuration")
     print("  logs                      View recent agent logs")
     print("  restart [reboot]          Restart the agent (or reboot the device)")
@@ -853,6 +855,34 @@ def main():
             show(request(host, f"/sensor/config/{args[1]}", method="POST", data=parse_kv(args[2:]), api_key=api_key))
         else:
             fail("Usage: ctrlpi-cli sensor <r|read|c|config> [args...]")
+    elif command == "script":
+        # The name is URL-encoded, so a path in it reaches the agent as one (refused) name.
+        name = urllib.parse.quote(args[1], safe="") if len(args) > 1 else None
+        if action in ("l", "list"):
+            show(request(host, "/script/list", api_key=api_key))
+        elif action in ("r", "read") and name:
+            # The file's text as is, so `script read x.py > x.py` saves a copy.
+            res = request(host, f"/script/read/{name}", api_key=api_key)
+            if isinstance(res, dict) and "content" in res:
+                sys.stdout.write(res["content"])
+            else:
+                show(res)
+        elif action in ("w", "write") and name:
+            if len(args) < 3:
+                fail("Usage: ctrlpi-cli script write <name> <file>")
+            if not os.path.isfile(args[2]):
+                fail(f"File not found: {args[2]}")
+            with open(args[2], "r", encoding="utf-8") as f:
+                content = f.read()
+            show(request(host, f"/script/write/{name}", method="POST", data={"content": content}, api_key=api_key))
+        elif action in ("rm", "remove") and name:
+            show(request(host, f"/script/write/{name}", method="POST", data={"remove": True}, api_key=api_key))
+        elif action == "run" and name:
+            # A Pi gives a script 15 s before killing it, so wait longer than that.
+            show(request(host, f"/script/run/{name}", method="POST", data={"args": args[2:]},
+                         api_key=api_key, timeout=20))
+        else:
+            fail("Usage: ctrlpi-cli script <l|list|r|read|w|write|rm|remove|run> [name] [file|args...]")
     elif command == "config":
         if action in ("r", "read"):
             show(request(host, "/config/read", api_key=api_key))
