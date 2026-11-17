@@ -1,7 +1,7 @@
 # ctrlPi API CLI
 
 [![Platform: Cross-Platform](https://img.shields.io/badge/platform-Cross--Platform-006400.svg)](#setup)
-[![Version 0.9.30](https://img.shields.io/badge/version-0.9.30-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
+[![Version 0.9.40](https://img.shields.io/badge/version-0.9.40-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Auth: Api-Key](https://img.shields.io/badge/auth-Api--Key-orange.svg)](#setup)
 [![License: MIT](https://img.shields.io/badge/license-MIT-188038.svg)](LICENSE)
@@ -145,6 +145,28 @@ The files in the agent's `scripts/` folder, the one sensors run from (agents 0.9
 ./ctrlpi-cli.py upgrade
 ```
 
+#### 15. Test an agent
+Runs 10 checks against the agent and prints `PASS`, `FAIL` or `SKIP` for each, then exits with `0` when none failed:
+```bash
+./ctrlpi-cli.py test
+./ctrlpi-cli.py pi4 test
+```
+
+| # | Check | What it does |
+|---|---|---|
+| 1 | Agent answers | `/hello` answers with the agent's name |
+| 2 | Key and config | a wrong key is refused, and `/config/read` answers with `gpios` and the `agent` block |
+| 3 | Read pins | all pins, the first configured one, and `404` for a pin that does not exist |
+| 4 | Write an output | writes the first output pin's own value and reads it back (skipped with no output pin) |
+| 5 | Scan pins | `/gpio/scan` lists the pins (skipped on a platform with no GPIOs) |
+| 6 | Configure a pin | configures the highest free pin as an input, checks it, removes it and checks again |
+| 7 | Sensors | `/sensor/read` answers |
+| 8 | Run a script | runs the `cpu-temp` example (skipped when it is not there) |
+| 9 | Write a script | writes `cli-test.sh`, reads it back, then removes it (skipped while `write.lock` is in `scripts/`) |
+| 10 | Logs | `/logs` answers |
+
+The agent is left as it was: no output changes state, the test pin and the test script are removed again, and nothing is restarted. Webhooks are not tested. On the default key, check 9 sets a temporary key for the write (script writes need one), then puts the default back; if that fails, the CLI prints the temporary key.
+
 ## Testing
 
 The test suite starts its own mock agent (`mock_agent.py`), so no real agent is needed:
@@ -158,13 +180,12 @@ python3 test.py
 - **[`pi-gpio-api`](https://github.com/ctrlpi/pi-gpio-api)**: Raspberry Pi GPIO REST server that reads inputs and drives outputs (and named sensors) over an HTTP API.
 - **[`pico-gpio-api`](https://github.com/ctrlpi/pico-gpio-api)**: Raspberry Pi Pico W port of the GPIO REST server, with the same endpoints, wire format, and auth.
 - **[`esp32-gpio-api`](https://github.com/ctrlpi/esp32-gpio-api)**: ESP32 port of the GPIO REST server for MicroPython, with the same endpoints, wire format, and auth.
-- **[`mcp-bridge`](https://github.com/ctrlpi/mcp-bridge)**: MCP server that exposes GPIO control as tools for AI agents (e.g. Claude), executing them over the agents' REST API.
+- **[`ctrlpi-mcp`](https://github.com/ctrlpi/ctrlpi-mcp)**: MCP server that exposes GPIO control as tools for AI agents (e.g. Claude), executing them over the agents' REST API.
 - **[`homebridge-ctrlpi`](https://github.com/ctrlpi/homebridge-ctrlpi)**: A Homebridge plugin that brings Raspberry Pi, Pico W, and ESP32 GPIO into Apple Home, by driving one or more GPIO agents over their REST API.
-- **`homekit-bridge`** *(coming soon)*: Native Apple HomeKit bridge that exposes GPIO pins and sensors as HomeKit accessories, driven over the agents' REST API.
-- **`matter-bridge`** *(coming soon)*: Matter bridge that exposes GPIO pins and sensors to any Matter platform (Apple Home, Google Home, Alexa, Home Assistant), driven over the agents' REST API.
+- **`ctrlpi-matter`** *(coming soon)*: Matter bridge that exposes GPIO pins and sensors to any Matter platform (Apple Home, Google Home, Alexa, Home Assistant), driven over the agents' REST API.
 - **[`ctrlpi-lab`](https://github.com/ctrlpi/ctrlpi-lab)**: A local browser dashboard for your ctrlPi setup. Test GPIO and sensor endpoints, watch webhook events, and tail agent logs.
 - **[`pico-bay`](https://github.com/ctrlpi/pico-bay)**: Web app and MCP server for managing MicroPython and CircuitPython boards, such as the Raspberry Pi Pico and ESP32, over USB.
-- **`pi-bay`** *(coming soon)*: A local web app and MCP server for Raspberry Pi boards over the network. Edit files, open a remote terminal, and manage your Pi remotely.
+- **[`pi-bay`](https://github.com/ctrlpi/pi-bay)**: A local web app and MCP server for Raspberry Pi boards over the network. Edit files, open a remote terminal, and manage your Pi remotely.
 
 ## License
 

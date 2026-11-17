@@ -9,17 +9,19 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.9.30"  # CLI version; keep in sync with the README badge
+VERSION = "0.9.40"  # CLI version; keep in sync with the README badge
 # The first word after the optional host; any other first word is taken as the host.
-COMMANDS = {"use", "scan", "gpio", "sensor", "script", "config", "logs", "restart", "upgrade"}
+COMMANDS = {"use", "scan", "gpio", "sensor", "script", "config", "logs", "restart", "upgrade", "test"}
 DEFAULT_AGENT_KEY = "your-secret-key"  # the key every agent ships with
 DEFAULT_PORT = 8314
 SHARED_AGENTS_FILENAME = "agents-config.json"
@@ -743,6 +745,218 @@ def show(res):
     print(json.dumps(res, indent=2))
 
 
+# --- test: 10 checks against one agent ---------------------------------------------------
+# Each check leaves the agent as it found it: the output write repeats the pin's own value,
+# the test pin and the test script are removed again, and a temporary key is put back.
+# Nothing here restarts the agent or touches its webhooks.
+
+TEST_PIN_NAME = "cli-test"
+TEST_SCRIPT = "cli-test.sh"
+
+
+class TestSkip(Exception):
+    pass
+
+
+def call(host, path, method="GET", data=None, api_key=None, timeout=5):
+    """One REST call that never exits: returns (status, body), status None when there was no answer."""
+    headers = {}
+    if api_key is not None:
+        headers["Api-Key"] = str(api_key)
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"http://{host}{path}", data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status, raw = response.status, response.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, e.read()
+    except (urllib.error.URLError, OSError) as e:
+        return None, str(getattr(e, "reason", e))
+    text = raw.decode("utf-8", "replace")
+    try:
+        return status, json.loads(text)
+    except ValueError:
+        return status, text
+
+
+def expect(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def call_ok(ctx, path, method="GET", data=None, timeout=5):
+    """A call that must answer 200; returns the body."""
+    status, body = call(ctx["host"], path, method, data, ctx["key"], timeout)
+    expect(status == 200, f"{method} {path}: {status or 'no answer'} {str(body)[:80]}".rstrip())
+    return body
+
+
+def config_pins(ctx):
+    cfg = call_ok(ctx, "/config/read")
+    pins = cfg.get("gpios") if isinstance(cfg, dict) else None
+    expect(isinstance(pins, dict), "/config/read has no gpios")
+    return pins
+
+
+def check_hello(ctx):
+    status, body = call(ctx["host"], "/hello")
+    expect(status == 200 and isinstance(body, dict) and body.get("name"), f"/hello: {status or 'no answer'}")
+    return f"name {body['name']}"
+
+
+def check_key_and_config(ctx):
+    status, _ = call(ctx["host"], "/config/read", api_key="ctrlpi-cli-wrong-key")
+    expect(status in (401, 403), f"a wrong key got {status or 'no answer'}, not 403")
+    cfg = call_ok(ctx, "/config/read")
+    agent = cfg.get("agent") or {}
+    expect(isinstance(cfg.get("gpios"), dict) and agent.get("version"), "/config/read lacks gpios or agent.version")
+    ctx["pins"] = cfg["gpios"]
+    return f"wrong key refused, agent {agent['version']}" + (f" on {agent['platform']}" if agent.get("platform") else "")
+
+
+def check_read_pins(ctx):
+    call_ok(ctx, "/gpio/read")
+    if ctx["pins"]:
+        pin = next(iter(ctx["pins"]))
+        call_ok(ctx, f"/gpio/read/{pin}")
+    status, _ = call(ctx["host"], "/gpio/read/999", api_key=ctx["key"])
+    expect(status == 404, f"/gpio/read/999: {status or 'no answer'}, not 404")
+    return f"{len(ctx['pins'])} configured, unknown pin 404"
+
+
+def check_write_output(ctx):
+    outputs = [g for g, p in ctx["pins"].items() if isinstance(p, dict) and p.get("type") == "output"]
+    if not outputs:
+        raise TestSkip("no output pin configured")
+    pin = outputs[0]
+    value = call_ok(ctx, f"/gpio/read/{pin}").get("value")
+    expect(value in (0, 1), f"pin {pin} reads {value!r}")
+    call_ok(ctx, f"/gpio/write/{pin}", "POST", {"value": value})
+    back = call_ok(ctx, f"/gpio/read/{pin}").get("value")
+    expect(back == value, f"pin {pin} read {back!r} after writing {value}")
+    return f"pin {pin} kept at {value}"
+
+
+def check_scan(ctx):
+    status, body = call(ctx["host"], "/gpio/scan", api_key=ctx["key"])
+    if status == 422:
+        raise TestSkip("this platform has no GPIOs")
+    expect(status == 200, f"/gpio/scan: {status or 'no answer'}")
+    pins = body.get("gpios") if isinstance(body, dict) else body
+    expect(isinstance(pins, list), "/gpio/scan has no pin list")
+    ctx["scan"] = [str(p["gpio"]) for p in pins if isinstance(p, dict) and "gpio" in p]
+    return f"{len(pins)} pins"
+
+
+def check_pin_config(ctx):
+    # The highest free pin: the low ones are the I2C, 1-Wire and UART pins sensors often use.
+    candidates = sorted((g for g in ctx.get("scan", []) if g.isdigit()), key=int, reverse=True) \
+        or [str(g) for g in range(27, 3, -1)]
+    free = [g for g in candidates if g not in ctx["pins"] and g not in ("2", "3")]
+    if not free:
+        raise TestSkip("no free pin")
+    pin = free[0]
+    call_ok(ctx, f"/gpio/config/{pin}", "POST", {"type": "input", "name": TEST_PIN_NAME})
+    try:
+        entry = config_pins(ctx).get(pin) or {}
+        expect(entry.get("type") == "input", f"pin {pin} is not an input after the config")
+    finally:
+        call(ctx["host"], f"/gpio/config/{pin}", "POST", {"type": "remove"}, ctx["key"])
+    expect(pin not in config_pins(ctx), f"pin {pin} is still configured after the remove")
+    return f"pin {pin} configured as input, then removed"
+
+
+def check_sensors(ctx):
+    readings = call_ok(ctx, "/sensor/read")
+    expect(isinstance(readings, dict), "/sensor/read is not an object")
+    return f"{len(readings)} readings"
+
+
+def check_script_run(ctx):
+    listing = call_ok(ctx, "/script/list")
+    names = [s.get("name") for s in listing.get("scripts", []) if isinstance(s, dict)]
+    ctx["scripts"], ctx["write"] = names, listing.get("write")
+    script = next((n for n in names if n.startswith("cpu-temp")), None)
+    if not script:
+        raise TestSkip(f"{len(names)} scripts, no cpu-temp to run")
+    res = call_ok(ctx, f"/script/run/{urllib.parse.quote(script, safe='')}", "POST", {"args": []}, timeout=20)
+    expect(res.get("exit_code") == 0, f"{script} exit code {res.get('exit_code')}: {res.get('output')}")
+    return f"{script} -> {str(res.get('output'))[:20]}"
+
+
+def check_script_write(ctx):
+    if ctx.get("write") == "locked":
+        raise TestSkip("write.lock is in scripts/")
+    if TEST_SCRIPT in ctx.get("scripts", []):
+        raise TestSkip(f"{TEST_SCRIPT} already exists on the agent")
+    # Writes are refused while the key is the default: use a temporary key, then put it back.
+    original = ctx["key"]
+    temp = f"cli-test-{secrets.token_hex(4)}" if original == DEFAULT_AGENT_KEY else None
+    if temp:
+        call_ok(ctx, "/config/update", "POST", {"api_key": temp})
+        ctx["key"] = temp
+    try:
+        content = f"echo ctrlpi-cli test {secrets.token_hex(4)}\n"
+        call_ok(ctx, f"/script/write/{TEST_SCRIPT}", "POST", {"content": content})
+        back = call_ok(ctx, f"/script/read/{TEST_SCRIPT}")
+        expect(back.get("content") == content, "the script read back is not the one written")
+        call_ok(ctx, f"/script/write/{TEST_SCRIPT}", "POST", {"remove": True})
+        status, _ = call(ctx["host"], f"/script/read/{TEST_SCRIPT}", api_key=ctx["key"])
+        expect(status == 404, f"{TEST_SCRIPT} still there after the remove ({status})")
+    finally:
+        if temp:
+            status, _ = call(ctx["host"], "/config/update", "POST", {"api_key": original}, temp)
+            if status == 200:
+                ctx["key"] = original
+            else:
+                warn(f"[SECURITY] Could not put the agent's key back: it is now '{temp}'.")
+    return "written, read back, removed" + (" (temporary key)" if temp else "")
+
+
+def check_logs(ctx):
+    res = call_ok(ctx, "/logs")
+    expect(isinstance(res, dict) and isinstance(res.get("logs"), list), "/logs has no logs list")
+    return f"{len(res['logs'])} lines"
+
+
+AGENT_CHECKS = [
+    ("Agent answers", check_hello),
+    ("Key and config", check_key_and_config),
+    ("Read pins", check_read_pins),
+    ("Write an output", check_write_output),
+    ("Scan pins", check_scan),
+    ("Configure a pin", check_pin_config),
+    ("Sensors", check_sensors),
+    ("Run a script", check_script_run),
+    ("Write a script", check_script_write),
+    ("Logs", check_logs),
+]
+
+
+def run_agent_tests(host, api_key):
+    """Run AGENT_CHECKS in order; returns True when none failed (a skip is not a failure)."""
+    ctx = {"host": host, "key": api_key, "pins": {}}
+    print(f"Testing {host}")
+    counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+    for i, (title, check) in enumerate(AGENT_CHECKS, 1):
+        started = time.monotonic()
+        try:
+            result, detail = "PASS", check(ctx)
+        except TestSkip as e:
+            result, detail = "SKIP", str(e)
+        except Exception as e:
+            result, detail = "FAIL", str(e)
+        ms = int((time.monotonic() - started) * 1000)
+        counts[result] += 1
+        tag = color(result, {"PASS": "32", "FAIL": "31", "SKIP": "33"}[result])
+        print(f"{i:>2} {tag}  {title:<16} {detail}  ({ms} ms)")
+    print(f"{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped")
+    return counts["FAIL"] == 0
+
+
 def print_help():
     # Kept in step with the README.
     print("Usage: ctrlpi-cli [--config <dir>] [--api-key <key>] [host] <command> [args...]")
@@ -756,6 +970,7 @@ def print_help():
     print("  logs                      View recent agent logs")
     print("  restart [reboot]          Restart the agent (or reboot the device)")
     print("  upgrade                   Upgrade the agent")
+    print("  test                      Run 10 checks against the agent (leaves it as it was)")
     print("\nOptions:")
     print("  --config <dir>            Keep config files in <dir> instead of ~/.ctrlpi")
     print("  --api-key <key>           Use this key instead of the saved one")
@@ -929,6 +1144,8 @@ def main():
     elif command == "upgrade":
         # The agent downloads the latest release, then restarts on it.
         show(request(host, "/upgrade", method="POST", api_key=api_key))
+    elif command == "test":
+        sys.exit(0 if run_agent_tests(host, api_key) else 1)
 
 
 if __name__ == "__main__":

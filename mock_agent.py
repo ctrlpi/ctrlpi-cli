@@ -97,6 +97,9 @@ class AgentHandler(BaseHTTPRequestHandler):
                 gpio_id = urllib.parse.unquote(parts[3])
                 if gpio_id == "error_pin":
                     return self.send_error_json("Simulated error", 500)
+                # Like the agents: a pin number no board has is a 404.
+                if gpio_id.isdigit() and int(gpio_id) > 48:
+                    return self.send_error_json(f"Pin {gpio_id} not found", 404)
                     
                 # Map using bridge-config.json
                 try:
@@ -256,6 +259,10 @@ class AgentHandler(BaseHTTPRequestHandler):
 
         if self.path.startswith('/gpio/config/'):
             gpio_id = self.path.split('/')[3]
+            # Like the agents: type "remove" deletes the pin's config.
+            if body.get("type") == "remove":
+                self.server.config.setdefault("gpios", {}).pop(gpio_id, None)
+                return self.send_json({"status": "removed"})
             self.server.config.setdefault("gpios", {})[gpio_id] = body
             return self.send_json({"status": "configured"})
 

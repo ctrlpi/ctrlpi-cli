@@ -376,6 +376,29 @@ class TestCtrlPiCli(unittest.TestCase):
             self.run_cli("config", "load", temp_name)
             os.remove(temp_name)
 
+    def test_agent_test_command(self):
+        # All 10 checks pass on the mock, and the agent is left as it was: same key,
+        # no test pin, no test script, the output still at its value.
+        self.run_cli("gpio", "c", "21", "type=output")
+        try:
+            r = self.run_cli_raw("test")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("10 passed, 0 failed, 0 skipped", r.stdout)
+            self.assertIn("pin 21 kept at", r.stdout)
+            self.assertIn("(temporary key)", r.stdout)
+            self.assertNotIn("[SECURITY]", r.stderr)
+            cfg = json.loads(self.run_cli("config", "read"))       # the default key still works
+            self.assertNotIn("26", cfg["gpios"])                    # the test pin is gone
+            names = [s["name"] for s in json.loads(self.run_cli("script", "list"))["scripts"]]
+            self.assertNotIn("cli-test.sh", names)                  # the test script is gone
+        finally:
+            self.run_cli("gpio", "c", "21", "type=remove")
+
+    def test_agent_test_command_fails_on_a_wrong_key(self):
+        r = self.run_cli_raw("--api-key", "wrong-key", "test")
+        self.assertEqual(r.returncode, 1)
+        self.assertRegex(r.stdout, r" 1 PASS .*\n 2 FAIL ")
+
     def test_api_key_flag(self):
         r = self.run_cli_raw("--api-key", "wrong-key", "config", "read")
         self.assertEqual(r.returncode, 1)

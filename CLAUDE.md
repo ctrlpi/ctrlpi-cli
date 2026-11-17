@@ -20,14 +20,14 @@ A pure Python, zero-dependency command-line interface (`ctrlpi-cli.py`) for inte
 
 `python test.py` (no dependencies; CI runs it on Ubuntu). It starts `mock_agent.py` on `127.0.0.1:12314` and runs
 `ctrlpi-cli.py` against it through `subprocess`, plus a few in-process checks of its functions, all with a temporary
-`--config` folder. `mock_agent.py` answers the agents' REST API from memory; ctrlpi-lab, mcp-bridge, homekit-bridge
-and matter-bridge keep identical copies, so change them all together.
+`--config` folder. `mock_agent.py` answers the agents' REST API from memory; ctrlpi-lab, ctrlpi-mcp
+and the bridges keep identical copies, so change them all together.
 
 ## Config folder (`--config`)
 
 Config files (`cli-config.json` with the default host, `agents-config.json` with the shared agent
 list) live in `~/.ctrlpi/`, or in the folder given by `--config <dir>`, the same flag ctrlpi-lab and
-mcp-bridge take. `pop_flag()` strips it (and `--api-key`) from `sys.argv` (it may appear anywhere) and sets the
+ctrlpi-mcp take. `pop_flag()` strips it (and `--api-key`) from `sys.argv` (it may appear anywhere) and sets the
 module-level `CONFIG_DIR` that `get_config_path()` reads. `test.py` passes `--config <tempdir>` to
 every CLI run and sets `mod.CONFIG_DIR` on in-process loads, so the tests never touch the real
 `~/.ctrlpi`. Keep it that way: a new test that writes config must go through that temp folder.
@@ -44,6 +44,10 @@ A saved agent's `api_key` comes from `agents-config.json`, anything else gets th
 ## Scripts
 
 `script <list|read|write|rm|run>` drives the agents' `/script/*` routes. The name is URL-encoded (`urllib.parse.quote(..., safe="")`), so a path in it reaches the agent as one name, which it refuses. `read` prints the file's text as is (not JSON), so it can be redirected to a file; `write <name> <file>` uploads a local file; `run` waits 20 s (`request(timeout=...)`), past the Pi's 15 s script limit. `test_scripts` covers the default-key `403`, then the full cycle on a changed key.
+
+## Agent test (`test`)
+
+`ctrlpi-cli [host] test` runs `AGENT_CHECKS`, 10 checks in order: hello, wrong key refused plus `/config/read`, pin reads (all, one, `999` is a 404), write an output's own value, scan, configure the highest free pin as an input then remove it, sensors, run `cpu-temp`, write/read/remove `cli-test.sh`, logs. Each prints `PASS`, `FAIL` or `SKIP`; the exit code is 1 only on a `FAIL`. The checks use `call()`, which returns `(status, body)` instead of exiting like `request()`. Every check leaves the agent as it found it, and no check touches webhooks, restart or upgrade. On the default key the script check sets a temporary key (script writes need one) and puts the default back in a `finally`, warning with the temporary key if that fails; the temporary key is never saved to `agents-config.json`. `test_agent_test_command` runs it against the mock, which answers `404` for a pin number above 48 and deletes a pin on `{"type": "remove"}` like the agents.
 
 ## Output
 
