@@ -143,6 +143,21 @@ class TestCtrlPiCli(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data.get("status"), "configured")
 
+    def test_gpio_config_pin_script_stays_text(self):
+        """A pin's script (0.9.50+) goes to the agent as text: with a space after on:, as a bare word
+        that would otherwise read as a boolean, and empty to clear it"""
+        def stored():
+            return json.loads(self.run_cli("config", "read"))["gpios"]["26"]["script"]
+        out = self.run_cli("gpio", "config", "26", "type=output", "script=on: relay.sh")
+        self.assertEqual(json.loads(out).get("status"), "configured")
+        self.assertEqual(stored(), "on: relay.sh")
+        self.run_cli("gpio", "config", "26", "type=output", "script=on")
+        self.assertEqual(stored(), "on")
+        self.run_cli("gpio", "config", "26", "type=output", "script=5")
+        self.assertEqual(stored(), "5")
+        self.run_cli("gpio", "config", "26", "type=output", "script=")
+        self.assertEqual(stored(), "")
+
     def test_gpio_pulse(self):
         # Write value 1 with a duration of 2.5 seconds
         out = self.run_cli("gpio", "w", "26", "1", "2.5")

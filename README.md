@@ -1,7 +1,7 @@
 # ctrlPi API CLI
 
 [![Platform: Cross-Platform](https://img.shields.io/badge/platform-Cross--Platform-006400.svg)](#setup)
-[![Version 0.9.40](https://img.shields.io/badge/version-0.9.40-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
+[![Version 0.9.50](https://img.shields.io/badge/version-0.9.50-blue.svg)](https://github.com/ctrlpi/ctrlpi-cli/tags)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Auth: Api-Key](https://img.shields.io/badge/auth-Api--Key-orange.svg)](#setup)
 [![License: MIT](https://img.shields.io/badge/license-MIT-188038.svg)](LICENSE)
@@ -84,6 +84,10 @@ The CLI covers every endpoint of the agent's REST API that needs a key. Below ar
 #### 4. Configure a pin
 ```bash
 ./ctrlpi-cli.py gpio config 26 name=relay type=output reversed=true max=3600
+
+# Run relay.sh when the pin changes (agent 0.9.50+): on: only for 1, off: only for 0, no prefix for both
+# (with 1 or 0 as the last argument). script= clears it.
+./ctrlpi-cli.py gpio config 26 script="on: relay.sh"
 ```
 
 #### 5. Scan all hardware GPIO pins

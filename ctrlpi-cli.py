@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.9.40"  # CLI version; keep in sync with the README badge
+VERSION = "0.9.50"  # CLI version; keep in sync with the README badge
 # The first word after the optional host; any other first word is taken as the host.
 COMMANDS = {"use", "scan", "gpio", "sensor", "script", "config", "logs", "restart", "upgrade", "test"}
 DEFAULT_AGENT_KEY = "your-secret-key"  # the key every agent ships with
